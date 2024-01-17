@@ -1,45 +1,28 @@
-import axios from "axios";
-import md5 from "md5";
-import requestConfig from "./config.js";
+import request from "./http";
 
-let request = axios.create({
-  // 基础配置
-  baseURL: "http://localhost:8000/",
-  timeout: 30 * 1000,
-  responseType: "json",
-  headers: {},
-});
-
-request.interceptors.request.use(
-  (config) => {
-    // token,密钥的设置
-    let whiteListApi = requestConfig.whiteListApi;
-    let url = config.url;
-    let token = localStorage.getItem("token");
-    // 不在白名单并且有token，则携带token
-    if (whiteListApi.indexOf(url) === -1 && token) {
-      config.headers.token = token;
+// 防止频繁提交，多次触发只请求一次，只有请求结束之后才可以下一次请求
+// 不是固定间隔的节流
+const throttleRequest = (function () {
+  let requestCache = [];
+  let dataCache = new Map(); // 缓存结果
+  return function (config) {
+    const url = config.url;
+    if (dataCache.has(url)) {
+      return dataCache.get(url);
+    } else {
+      if (requestCache.indexOf(url) !== -1) {
+        return Promise.reject({ message: "请求已提交" });
+      }
+      requestCache.push(url);
+      return request(config).then((res) => {
+        requestCache = requestCache.filter((item) => {
+          return item !== url;
+        });
+        dataCache.set(url, res);
+        return res;
+      });
     }
-    // 有些项目需要传密钥 secretId + 特殊算法
-    config.headers.secret = md5(requestConfig.secretId + new Date().toString());
+  };
+})();
 
-    return config;
-  },
-  (error) => {
-    return Promise.reject(new Error(error));
-  }
-);
-
-request.interceptors.response.use(
-  (res) => {
-    // 响应的统一处理
-    const code = res.data.code || 200;
-    const message = res.data.msg || "未知错误";
-  },
-  (error) => {
-    // 此处会捕获 status 4xx、5xx 的错误
-    // 建议用组件库的消息提示组件
-    // message.error(error.message)
-    return Promise.reject(new Error(error));
-  }
-);
+export { throttleRequest as request, request as initRequest };
